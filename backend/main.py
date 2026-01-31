@@ -9,13 +9,13 @@ import json
 import base64
 import os
 import uuid
-from markdown_pdf import MarkdownPdf, Section
+from fpdf import FPDF  # Changed from markdown_pdf to fpdf
 from fastapi import BackgroundTasks
 
 from .parsers import pdf_parser, docx_parser, txt_parser
 from .core.chunker import chunk_text
 from .core.embedder import embedder_instance
-from .core.vector_store.chroma import vector_store_instance
+from .vector_store.chroma import vector_store_instance
 from .core.llm import llm_instance
 from .core.scheduler import scheduler, session_manager
 
@@ -25,7 +25,7 @@ app = FastAPI(
     version="4.1.0-stable",
 )
 
-# --- CORRECTED CORS POLICY FOR VERCEL PREVIEWS ---
+# --- CORS POLICY ---
 allow_origin_regex = r"https://.*\.vercel\.app"
 origins = [
     "http://localhost:5173",
@@ -34,13 +34,12 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=allow_origin_regex, # Use the regex for Vercel
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Source-Chunks"],
 )
-# --- END OF CORS FIX ---
 
 @app.on_event("startup")
 async def startup_event():
@@ -64,6 +63,16 @@ class QueryRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     chat_history: List[ChatMessage] = []
+
+# --- HELPER FUNCTION FOR PDF GENERATION ---
+def clean_text(text):
+    """Removes emojis and special characters that crash standard FPDF."""
+    if not text:
+        return ""
+    # Replace fancy quotes and bullets with standard ones
+    text = text.replace('“', '"').replace('”', '"').replace('’', "'").replace('–', '-')
+    # Remove emojis and non-latin characters (forces text to be simple English)
+    return text.encode('latin-1', 'replace').decode('latin-1')
 
 @app.get("/", tags=["Health Check"])
 def read_root():
@@ -142,28 +151,51 @@ async def query_document(request: QueryRequest):
 @app.post("/export/pdf", tags=["Exporting"])
 async def export_conversation_to_pdf(request: ExportRequest, background_tasks: BackgroundTasks):
     chat_history = [msg.dict() for msg in request.chat_history]
-    if not chat_history or len(chat_history) <= 1:
-        raise HTTPException(status_code=400, detail="Cannot export an empty conversation.")
-    try:
-        markdown_content = await llm_instance.summarize_conversation(chat_history)
-        if "Error:" in markdown_content:
-            raise HTTPException(status_code=500, detail=markdown_content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate summary: {e}")
     
+    if not chat_history:
+        # Allow export even if empty to prevent frontend crashes, but give a default message
+        summary = "No conversation history to summarize."
+    else:
+        try:
+            # Check if the summary function exists
+            if hasattr(llm_instance, 'summarize_conversation'):
+                summary = await llm_instance.summarize_conversation(chat_history)
+                if "Error:" in summary:
+                    summary = "Could not generate summary due to an AI error."
+            else:
+                summary = "Summary function missing in LLM module."
+        except Exception as e:
+            print(f"Summary Generation Failed: {e}")
+            summary = "Summary generation failed."
+
+    # --- FPDF GENERATION (SAFE MODE) ---
     reports_dir = "generated_reports"
     os.makedirs(reports_dir, exist_ok=True)
     pdf_filename = f"{uuid.uuid4()}.pdf"
     pdf_filepath = os.path.join(reports_dir, pdf_filename)
 
     try:
-        pdf = MarkdownPdf(toc_level=2)
-        pdf.add_section(Section(markdown_content, toc=True))
-        pdf.save(pdf_filepath)
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Title
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, txt="Conversation Summary", ln=True, align='C')
+        pdf.ln(10)
+
+        # Body - Cleaned to prevent crashes
+        pdf.set_font("Arial", size=12)
+        cleaned_summary = clean_text(summary)
+        pdf.multi_cell(0, 10, txt=cleaned_summary)
+
+        pdf.output(pdf_filepath)
+        
+        # Schedule deletion of file after sending
         background_tasks.add_task(os.remove, pdf_filepath)
+        
         return FileResponse(
             path=pdf_filepath, filename="DocuMentor_Summary.pdf", media_type='application/pdf'
         )
     except Exception as e:
         print(f"!!! PDF GENERATION FAILED !!!: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert Markdown to PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
