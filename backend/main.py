@@ -33,14 +33,11 @@ origins = [
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex=allow_origin_regex,
+    allow_origins=["*"],  # <--- THIS IS THE KEY FIX. Allow everyone.
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Source-Chunks"],
 )
-
 @app.on_event("startup")
 async def startup_event():
     scheduler.add_job(session_manager.cleanup_expired_sessions, 'interval', minutes=10)
