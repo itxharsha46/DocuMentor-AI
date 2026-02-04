@@ -29,12 +29,11 @@ function UploadBox({ onUploadSuccess }) {
     setStatus('uploading');
     setErrorMessage('');
     try {
-      // --- THIS IS THE CORRECTED LINE ---
-      // It now uses the environment variable and has the correct commas.
-      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/process/`, formData, {
+
+      const response = await axios.post('https://documentor-backend-ac59508.onrender.com/process/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      // --- END OF CORRECTION ---
+
 
       setStatus('success');
       onUploadSuccess(response.data.session_id);

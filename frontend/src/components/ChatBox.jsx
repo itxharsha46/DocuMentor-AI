@@ -37,12 +37,14 @@ function ChatBox({ sessionId }) {
     setUserInput('');
     setSuggestions([]);
     setIsLoading(true);
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/query/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, question: messageText, chat_history: historyForAPI }),
-      });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+try {
+  const response = await fetch(`https://documentor-backend-ac59508.onrender.com/query/`, {
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, question: messageText, chat_history: historyForAPI }),
+  });
+  
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const sourcesHeader = response.headers.get('X-Source-Chunks');
       const decodedSources = sourcesHeader ? JSON.parse(atob(sourcesHeader)) : [];
       const reader = response.body.getReader();
@@ -78,7 +80,7 @@ function ChatBox({ sessionId }) {
       const historyForExport = messages.map(msg => ({
         sender: msg.sender, text: msg.text,
       }));
-      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/export/pdf`, {
+      const response = await axios.post(`https://documentor-backend-ac59508.onrender.com/export/pdf`, {
           chat_history: historyForExport
       }, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data]));
