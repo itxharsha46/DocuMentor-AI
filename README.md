@@ -6,7 +6,7 @@
 
 **DocuMentor AI** is an intelligent, full-stack document analysis platform that transforms static files into interactive conversational partners. Leveraging an advanced **Agentic RAG (Retrieval-Augmented Generation)** pipeline, it allows users to upload documents and receive context-aware, cited answers in real-time.
 
-**[➡️ View Live Demo](https://explain-my-doc.vercel.app/)**
+**[➡️ View Live Demo](https://docu-mentor-ai-red.vercel.app/)**
 
 ---
 
