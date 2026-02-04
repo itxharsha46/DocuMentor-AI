@@ -12,14 +12,21 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # FIX: Use the specific, stable version name
+        # DEBUGGER: Print available models to Render logs
+        print("----- AVAILABLE MODELS FOR THIS KEY -----")
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    print(f"Found model: {m.name}")
+        except Exception as e:
+            print(f"Error listing models: {e}")
+        print("-----------------------------------------")
+
+        # USE THE STANDARD FLASH MODEL
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
-        """Streams the answer from Gemini based on context."""
-        
-        # 1. ROBUST CHUNK HANDLING
-        # This fixes the "AttributeError: 'str' object has no attribute 'page_content'"
+        # Robust chunk handling (String vs Object)
         processed_chunks = []
         for chunk in context_chunks:
             if isinstance(chunk, str):
@@ -31,7 +38,6 @@ class LLM:
                 
         context_text = "\n\n".join(processed_chunks)
         
-        # 2. SYSTEM PROMPT
         prompt = f"""You are a helpful document assistant. Use the following context to answer the user's question.
         
         Context:
@@ -45,34 +51,26 @@ class LLM:
         Answer:"""
         
         try:
-            # stream=True is standard for chat interfaces
             response = self.model.generate_content(prompt, stream=True)
             for chunk in response:
                 if chunk.text:
                     yield chunk.text
         except Exception as e:
-            # This sends the error to the chat window so you can see it
             yield f"Error generating answer: {str(e)}"
 
     async def summarize_conversation(self, chat_history):
-        """Generates a concise summary of the chat history."""
         try:
             if not chat_history:
                 return "No conversation to summarize."
 
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in chat_history])
-            
-            prompt = f"""Summarize this conversation in bullet points:
-            
-            {history_text}"""
+            prompt = f"Summarize this conversation in bullet points:\n{history_text}"
             
             response = self.model.generate_content(prompt)
-            
             return response.text if response.text else "Empty summary."
 
         except Exception as e:
             print(f"!!! SUMMARIZATION ERROR: {e}")
             return f"Error: {str(e)}"
 
-# Create the singleton instance
 llm_instance = LLM()
