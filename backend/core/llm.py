@@ -14,7 +14,7 @@ else:
 class LLM:
     def __init__(self):
         # Using the high-quota model
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-flash-latest')
 
     def generate_answer_stream(self, question, context_chunks, chat_history):
         """

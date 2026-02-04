@@ -1,6 +1,4 @@
-# backend/main.py
-
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,9 +7,9 @@ import json
 import base64
 import os
 import uuid
-from fpdf import FPDF  # Changed from markdown_pdf to fpdf
-from fastapi import BackgroundTasks
+from fpdf import FPDF
 
+# Import your custom modules
 from .parsers import pdf_parser, docx_parser, txt_parser
 from .core.chunker import chunk_text
 from .core.embedder import embedder_instance
@@ -26,29 +24,15 @@ app = FastAPI(
 )
 
 # --- CORS POLICY ---
-allow_origin_regex = r"https://.*\.vercel\.app"
-origins = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # <--- THIS IS THE KEY FIX. Allow everyone.
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-@app.on_event("startup")
-async def startup_event():
-    scheduler.add_job(session_manager.cleanup_expired_sessions, 'interval', minutes=10)
-    scheduler.start()
-    print("Scheduler started and cleanup job scheduled.")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    scheduler.shutdown()
-    print("Scheduler shut down.")
-
+# --- MODELS ---
 class ChatMessage(BaseModel):
     sender: str
     text: str
@@ -61,19 +45,35 @@ class QueryRequest(BaseModel):
 class ExportRequest(BaseModel):
     chat_history: List[ChatMessage] = []
 
-# --- HELPER FUNCTION FOR PDF GENERATION ---
-def clean_text(text):
-    """Removes emojis and special characters that crash standard FPDF."""
-    if not text:
-        return ""
-    # Replace fancy quotes and bullets with standard ones
-    text = text.replace('“', '"').replace('”', '"').replace('’', "'").replace('–', '-')
-    # Remove emojis and non-latin characters (forces text to be simple English)
+# --- HELPERS ---
+def clean_text_for_pdf(text):
+    """Standardize characters that break FPDF (Latin-1 limitations)."""
+    if not text: return ""
+    replacements = {
+        '“': '"', '”': '"', '‘': "'", '’': "'", 
+        '—': '-', '–': '-', '…': '...', '\u2022': '-'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
     return text.encode('latin-1', 'replace').decode('latin-1')
+
+# --- EVENTS ---
+@app.on_event("startup")
+async def startup_event():
+    scheduler.add_job(session_manager.cleanup_expired_sessions, 'interval', minutes=10)
+    scheduler.start()
+    print("Scheduler started and cleanup job scheduled.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler.shutdown()
+    print("Scheduler shut down.")
+
+# --- ROUTES ---
 
 @app.get("/", tags=["Health Check"])
 def read_root():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "DocuMentor AI API is running"}
 
 @app.post("/process", tags=["Document Processing"])
 async def process_document(file: UploadFile = File(...)):
@@ -81,80 +81,67 @@ async def process_document(file: UploadFile = File(...)):
         session_id = vector_store_instance.create_collection()
         session_manager.register_session(session_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create a new session: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
     
     content_type = file.content_type
     filename = file.filename
     extracted_text = ""
     
-    if content_type == 'application/pdf': extracted_text = pdf_parser.parse_pdf(file)
-    elif content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or filename.endswith('.docx'): extracted_text = docx_parser.parse_docx(file)
-    elif content_type == 'text/plain' or filename.endswith('.txt'): extracted_text = txt_parser.parse_txt(file)
-    else: vector_store_instance.delete_collection(session_id); raise HTTPException(status_code=400, detail=f"Unsupported file type.")
+    if content_type == 'application/pdf': 
+        extracted_text = pdf_parser.parse_pdf(file)
+    elif content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or filename.endswith('.docx'): 
+        extracted_text = docx_parser.parse_docx(file)
+    elif content_type == 'text/plain' or filename.endswith('.txt'): 
+        extracted_text = txt_parser.parse_txt(file)
+    else: 
+        vector_store_instance.delete_collection(session_id)
+        raise HTTPException(status_code=400, detail="Unsupported file type.")
     
-    if "Error:" in extracted_text: vector_store_instance.delete_collection(session_id); raise HTTPException(status_code=500, detail=extracted_text)
-    if not extracted_text.strip(): vector_store_instance.delete_collection(session_id); raise HTTPException(status_code=400, detail="Document is empty.")
+    if "Error:" in extracted_text or not extracted_text.strip():
+        vector_store_instance.delete_collection(session_id)
+        raise HTTPException(status_code=400, detail="Invalid or empty document.")
 
     text_chunks = chunk_text(extracted_text)
-    batch_size = 100
-    total_chunks = len(text_chunks)
-    print(f"Starting to process {total_chunks} chunks in batches of {batch_size}...")
-    for i in range(0, total_chunks, batch_size):
-        batch_chunks = text_chunks[i:i + batch_size]
+    for i in range(0, len(text_chunks), 100):
+        batch = text_chunks[i:i + 100]
         try:
-            chunk_embeddings = await embedder_instance.embed_documents(batch_chunks)
-            metadatas = [{"source": filename} for _ in batch_chunks]
-            vector_store_instance.add_documents(
-                collection_name=session_id, chunks=batch_chunks, embeddings=chunk_embeddings, metadatas=metadatas
-            )
-            print(f"Processed batch {i // batch_size + 1}/{(total_chunks + batch_size - 1) // batch_size}")
+            embeddings = await embedder_instance.embed_documents(batch)
+            metadatas = [{"source": filename} for _ in batch]
+            vector_store_instance.add_documents(session_id, batch, embeddings, metadatas)
         except Exception as e:
             vector_store_instance.delete_collection(session_id)
-            raise HTTPException(status_code=500, detail=f"Failed to process batch {i}: {e}")
+            raise HTTPException(status_code=500, detail=f"Batch processing error: {e}")
 
-    return JSONResponse(
-        status_code=200, content={"message": "Document processed successfully in batches.", "session_id": session_id}
-    )
+    return {"message": "Processed successfully", "session_id": session_id}
 
 @app.post("/query", tags=["Question Answering"])
 async def query_document(request: QueryRequest):
-    session_id = request.session_id
-    question = request.question
-    chat_history = [msg.dict() for msg in request.chat_history]
-
     try:
-        query_embedding = await embedder_instance.embed_documents([question])
-        context_chunks = vector_store_instance.query(
-            collection_name=session_id,
-            query_embedding=query_embedding[0]
-        )
+        query_embedding = await embedder_instance.embed_documents([request.question])
+        context_chunks = vector_store_instance.query(request.session_id, query_embedding[0])
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Session not found or query error: {e}")
+        raise HTTPException(status_code=404, detail="Query error or session expired.")
 
-    sources_json = json.dumps(context_chunks)
-    sources_b64 = base64.b64encode(sources_json.encode('utf-8')).decode('utf-8')
-    custom_headers = { "X-Source-Chunks": sources_b64 }
-
+    sources_b64 = base64.b64encode(json.dumps(context_chunks).encode('utf-8')).decode('utf-8')
+    
     try:
         answer_generator = llm_instance.generate_answer_stream(
-            question=question,
+            question=request.question,
             context_chunks=context_chunks,
-            chat_history=chat_history
+            chat_history=[msg.dict() for msg in request.chat_history]
         )
-        return StreamingResponse(answer_generator, media_type="text/plain", headers=custom_headers)
+        return StreamingResponse(answer_generator, media_type="text/plain", headers={"X-Source-Chunks": sources_b64})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating final answer with LLM: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM Error: {e}")
 
 @app.post("/export/pdf", tags=["Exporting"])
 async def export_conversation_to_pdf(request: ExportRequest, background_tasks: BackgroundTasks):
     chat_history = [msg.dict() for msg in request.chat_history]
     
     if not chat_history:
-        # Allow export even if empty to prevent frontend crashes, but give a default message
         summary = "No conversation history to summarize."
     else:
         try:
-            # Check if the summary function exists
             if hasattr(llm_instance, 'summarize_conversation'):
                 summary = await llm_instance.summarize_conversation(chat_history)
                 if "Error:" in summary:
@@ -165,34 +152,31 @@ async def export_conversation_to_pdf(request: ExportRequest, background_tasks: B
             print(f"Summary Generation Failed: {e}")
             summary = "Summary generation failed."
 
-    # --- FPDF GENERATION (SAFE MODE) ---
+    # --- FPDF GENERATION ---
     reports_dir = "generated_reports"
     os.makedirs(reports_dir, exist_ok=True)
-    pdf_filename = f"{uuid.uuid4()}.pdf"
-    pdf_filepath = os.path.join(reports_dir, pdf_filename)
+    pdf_filename = f"Summary_{uuid.uuid4().hex[:8]}.pdf"
+    pdf_path = os.path.join(reports_dir, pdf_filename)
 
     try:
         pdf = FPDF()
         pdf.add_page()
-        
-        # Title
         pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, txt="Conversation Summary", ln=True, align='C')
+        pdf.cell(0, 10, txt="DocuMentor AI - Conversation Summary", ln=True, align='C')
         pdf.ln(10)
 
-        # Body - Cleaned to prevent crashes
         pdf.set_font("Arial", size=12)
-        cleaned_summary = clean_text(summary)
+        cleaned_summary = clean_text_for_pdf(summary)
         pdf.multi_cell(0, 10, txt=cleaned_summary)
 
-        pdf.output(pdf_filepath)
+        pdf.output(pdf_path)
         
-        # Schedule deletion of file after sending
-        background_tasks.add_task(os.remove, pdf_filepath)
+        # Schedule deletion after sending
+        background_tasks.add_task(os.remove, pdf_path)
         
         return FileResponse(
-            path=pdf_filepath, filename="DocuMentor_Summary.pdf", media_type='application/pdf'
+            path=pdf_path, filename="DocuMentor_Summary.pdf", media_type='application/pdf'
         )
     except Exception as e:
-        print(f"!!! PDF GENERATION FAILED !!!: {e}")
+        print(f"PDF GENERATION FAILED: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
