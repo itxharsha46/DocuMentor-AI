@@ -12,13 +12,14 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # FIX: Use 'gemini-pro' - the most stable model for your library version
-        self.model = genai.GenerativeModel('gemini-pro')
+        # FIX: Use the specific, stable version name
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
         """Streams the answer from Gemini based on context."""
         
-        # Handle both String chunks and Document objects
+        # 1. ROBUST CHUNK HANDLING
+        # This fixes the "AttributeError: 'str' object has no attribute 'page_content'"
         processed_chunks = []
         for chunk in context_chunks:
             if isinstance(chunk, str):
@@ -30,6 +31,7 @@ class LLM:
                 
         context_text = "\n\n".join(processed_chunks)
         
+        # 2. SYSTEM PROMPT
         prompt = f"""You are a helpful document assistant. Use the following context to answer the user's question.
         
         Context:
@@ -43,13 +45,13 @@ class LLM:
         Answer:"""
         
         try:
-            # 'gemini-pro' sometimes prefers non-streaming for short text, 
-            # but we keep stream=True for your frontend.
+            # stream=True is standard for chat interfaces
             response = self.model.generate_content(prompt, stream=True)
             for chunk in response:
                 if chunk.text:
                     yield chunk.text
         except Exception as e:
+            # This sends the error to the chat window so you can see it
             yield f"Error generating answer: {str(e)}"
 
     async def summarize_conversation(self, chat_history):
