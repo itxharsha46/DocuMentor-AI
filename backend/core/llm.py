@@ -12,12 +12,25 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # Use the specific Flash model that works best
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # FIX 2: Use "gemini-1.5-flash-latest" which is safer, 
+        # or fallback to "gemini-pro" if you prefer.
+        self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
         """Streams the answer from Gemini based on context."""
-        context_text = "\n\n".join([chunk.page_content for chunk in context_chunks])
+        
+        # FIX 1: Handle both String chunks and Document objects
+        # This prevents the "AttributeError: 'str' object has no attribute 'page_content'"
+        processed_chunks = []
+        for chunk in context_chunks:
+            if isinstance(chunk, str):
+                processed_chunks.append(chunk)
+            elif hasattr(chunk, 'page_content'):
+                processed_chunks.append(chunk.page_content)
+            else:
+                processed_chunks.append(str(chunk))
+                
+        context_text = "\n\n".join(processed_chunks)
         
         # Construct a clear system prompt
         prompt = f"""You are a helpful document assistant. Use the following context to answer the user's question.
