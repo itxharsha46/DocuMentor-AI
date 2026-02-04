@@ -12,21 +12,11 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # DEBUGGER: Print available models to Render logs
-        print("----- AVAILABLE MODELS FOR THIS KEY -----")
-        try:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    print(f"Found model: {m.name}")
-        except Exception as e:
-            print(f"Error listing models: {e}")
-        print("-----------------------------------------")
-
-        # USE THE STANDARD FLASH MODEL
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # FIX: Use a model explicitly found in your logs
+        self.model = genai.GenerativeModel('gemini-flash-latest')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
-        # Robust chunk handling (String vs Object)
+        # Robust chunk handling
         processed_chunks = []
         for chunk in context_chunks:
             if isinstance(chunk, str):
@@ -64,6 +54,7 @@ class LLM:
                 return "No conversation to summarize."
 
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in chat_history])
+            
             prompt = f"Summarize this conversation in bullet points:\n{history_text}"
             
             response = self.model.generate_content(prompt)
