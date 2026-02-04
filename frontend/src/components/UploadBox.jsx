@@ -30,7 +30,7 @@ function UploadBox({ onUploadSuccess }) {
     setErrorMessage('');
     try {
 
-      const response = await axios.post('https://documentor-backend-ac59508.onrender.com/process/', formData, {
+      const response = await axios.post('https://documentor-backend-ac59508.onrender.com/process', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 

@@ -75,7 +75,7 @@ def clean_text(text):
 def read_root():
     return {"status": "ok"}
 
-@app.post("/process/", tags=["Document Processing"])
+@app.post("/process", tags=["Document Processing"])
 async def process_document(file: UploadFile = File(...)):
     try:
         session_id = vector_store_instance.create_collection()
@@ -116,7 +116,7 @@ async def process_document(file: UploadFile = File(...)):
         status_code=200, content={"message": "Document processed successfully in batches.", "session_id": session_id}
     )
 
-@app.post("/query/", tags=["Question Answering"])
+@app.post("/query", tags=["Question Answering"])
 async def query_document(request: QueryRequest):
     session_id = request.session_id
     question = request.question
