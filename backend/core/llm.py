@@ -12,15 +12,13 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # FIX 2: Use "gemini-1.5-flash-latest" which is safer, 
-        # or fallback to "gemini-pro" if you prefer.
-        self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        # FIX: Use 'gemini-pro' - the most stable model for your library version
+        self.model = genai.GenerativeModel('gemini-pro')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
         """Streams the answer from Gemini based on context."""
         
-        # FIX 1: Handle both String chunks and Document objects
-        # This prevents the "AttributeError: 'str' object has no attribute 'page_content'"
+        # Handle both String chunks and Document objects
         processed_chunks = []
         for chunk in context_chunks:
             if isinstance(chunk, str):
@@ -32,7 +30,6 @@ class LLM:
                 
         context_text = "\n\n".join(processed_chunks)
         
-        # Construct a clear system prompt
         prompt = f"""You are a helpful document assistant. Use the following context to answer the user's question.
         
         Context:
@@ -46,6 +43,8 @@ class LLM:
         Answer:"""
         
         try:
+            # 'gemini-pro' sometimes prefers non-streaming for short text, 
+            # but we keep stream=True for your frontend.
             response = self.model.generate_content(prompt, stream=True)
             for chunk in response:
                 if chunk.text:
@@ -59,27 +58,18 @@ class LLM:
             if not chat_history:
                 return "No conversation to summarize."
 
-            # Format history for the prompt
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in chat_history])
             
-            prompt = f"""Please provide a professional, bulleted summary of the following Q&A conversation. 
-            Focus on the key insights extracted from the document.
+            prompt = f"""Summarize this conversation in bullet points:
             
-            Conversation:
-            {history_text}
+            {history_text}"""
             
-            Summary:"""
-            
-            # Non-streaming call for the summary
             response = self.model.generate_content(prompt)
             
-            if response.text:
-                return response.text
-            else:
-                return "AI returned an empty summary."
+            return response.text if response.text else "Empty summary."
 
         except Exception as e:
-            print(f"!!! SUMMARIZATION ERROR: {e}") # This prints to Render logs
+            print(f"!!! SUMMARIZATION ERROR: {e}")
             return f"Error: {str(e)}"
 
 # Create the singleton instance
