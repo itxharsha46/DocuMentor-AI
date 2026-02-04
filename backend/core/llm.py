@@ -14,7 +14,7 @@ else:
 class LLM:
     def __init__(self):
         # We use the standard gemini-pro model
-        self.model = genai.GenerativeModel('gemini-pro')
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def generate_answer_stream(self, question, context_chunks, chat_history):
         """
