@@ -1,101 +1,73 @@
-import os
 import google.generativeai as genai
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- 1. SETUP API KEY ---
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    print("CRITICAL ERROR: GOOGLE_API_KEY not found in environment!")
-else:
-    genai.configure(api_key=api_key)
-
 class LLM:
     def __init__(self):
-        # Using the high-quota model
-        self.model = genai.GenerativeModel('gemini-flash-latest')
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is missing")
+        
+        genai.configure(api_key=api_key)
+        
+        # Use the specific Flash model that works best
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
 
-    def generate_answer_stream(self, question, context_chunks, chat_history):
-        """
-        Generates an answer for the chat window (Streaming).
-        """
-        # --- FIX STARTS HERE ---
-        # Robustly handle context whether it's a list of strings OR dictionaries
-        context_parts = []
-        for chunk in context_chunks:
-            if isinstance(chunk, str):
-                context_parts.append(chunk)
-            elif isinstance(chunk, dict):
-                context_parts.append(chunk.get('text', ''))
-            else:
-                context_parts.append(str(chunk))
+    async def generate_answer_stream(self, question, context_chunks, chat_history):
+        """Streams the answer from Gemini based on context."""
+        context_text = "\n\n".join([chunk.page_content for chunk in context_chunks])
         
-        context_text = "\n\n".join(context_parts)
-        # --- FIX ENDS HERE ---
+        # Construct a clear system prompt
+        prompt = f"""You are a helpful document assistant. Use the following context to answer the user's question.
         
-        # 2. Build history string (limit to last 5 messages)
-        history_text = ""
-        for msg in chat_history[-5:]:
-            sender = msg.get('sender', 'User')
-            text = msg.get('text', '')
-            history_text += f"{sender}: {text}\n"
-
-        # 3. Create the Prompt
-        prompt = f"""
-        You are a helpful AI assistant named DocuMentor.
-        Use the following context from a document to answer the user's question.
-        
-        CONTEXT:
+        Context:
         {context_text}
-
-        CHAT HISTORY:
-        {history_text}
-
-        USER QUESTION: 
-        {question}
-
-        Answer:
-        """
-
-        # 4. Stream the response
+        
+        Chat History:
+        {chat_history}
+        
+        User Question: {question}
+        
+        Answer:"""
+        
         try:
             response = self.model.generate_content(prompt, stream=True)
             for chunk in response:
                 if chunk.text:
                     yield chunk.text
         except Exception as e:
-            print(f"LLM STREAM ERROR: {e}")
-            yield "I'm sorry, I encountered an error while generating the response."
+            yield f"Error generating answer: {str(e)}"
 
     async def summarize_conversation(self, chat_history):
-        """
-        Generates a summary for the PDF Export.
-        """
+        """Generates a concise summary of the chat history."""
         try:
             if not chat_history:
                 return "No conversation to summarize."
 
-            conversation_text = ""
-            for msg in chat_history:
-                sender = msg.get('sender', 'Unknown')
-                text = msg.get('text', '')
-                conversation_text += f"{sender}: {text}\n"
-
-            prompt = f"""
-            Please provide a professional, concise summary of the following conversation.
+            # Format history for the prompt
+            history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in chat_history])
             
-            CONVERSATION:
-            {conversation_text}
-
-            SUMMARY:
-            """
-
+            prompt = f"""Please provide a professional, bulleted summary of the following Q&A conversation. 
+            Focus on the key insights extracted from the document.
+            
+            Conversation:
+            {history_text}
+            
+            Summary:"""
+            
+            # Non-streaming call for the summary
             response = self.model.generate_content(prompt)
-            return response.text
+            
+            if response.text:
+                return response.text
+            else:
+                return "AI returned an empty summary."
 
         except Exception as e:
-            print(f"SUMMARIZATION ERROR: {e}")
-            return f"Error: Could not generate summary. Details: {e}"
+            print(f"!!! SUMMARIZATION ERROR: {e}") # This prints to Render logs
+            return f"Error: {str(e)}"
 
+# Create the singleton instance
 llm_instance = LLM()
