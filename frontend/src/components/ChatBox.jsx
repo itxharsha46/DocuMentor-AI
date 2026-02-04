@@ -38,7 +38,7 @@ function ChatBox({ sessionId }) {
     setSuggestions([]);
     setIsLoading(true);
 try {
-  const response = await fetch(`https://documentor-backend-8evm.onrender.com/query`, {
+  const response = await fetch('https://documentor-backend-8evm.onrender.com/query', {
     method: 'POST', 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, question: messageText, chat_history: historyForAPI }),
@@ -80,7 +80,7 @@ try {
       const historyForExport = messages.map(msg => ({
         sender: msg.sender, text: msg.text,
       }));
-      const response = await axios.post('https://documentor-backend-8evm.onrender.com/export/pdf', {
+      const response = await axios.post(`https://documentor-backend-8evm.onrender.com/export/pdf`, {
           chat_history: historyForExport
       }, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data]));
