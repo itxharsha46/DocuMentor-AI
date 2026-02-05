@@ -1,210 +1,184 @@
-// frontend/src/components/ChatBox.jsx
+import React, { useState } from 'react';
+import { FiSend, FiDownload } from 'react-icons/fi'; // Install react-icons if needed
 
-import React, { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
-import ReactMarkdown from 'react-markdown';
-import TextareaAutosize from 'react-textarea-autosize';
-import { FaUserCircle, FaPaperPlane, FaRobot, FaBook, FaQuestionCircle } from 'react-icons/fa';
-import { FiDownload, FiLoader } from 'react-icons/fi';
-import CodeBlock from './CodeBlock';
-import Modal from 'react-modal';
-
-Modal.setAppElement('#root');
-
-function ChatBox({ sessionId }) {
-  const [messages, setMessages] = useState([
-    { id: 1, text: "Hello! I have read your document. Feel free to ask me any questions about it.", sender: 'ai', sources: [] }
-  ]);
-  const [userInput, setUserInput] = useState('');
+const ChatBox = ({ sessionId }) => {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [modalIsOpen, setModalIsOpen] = useState(false);
-  const [currentSources, setCurrentSources] = useState([]);
-  const [suggestions, setSuggestions] = useState([]);
-  const chatEndRef = useRef(null);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const scrollToBottom = () => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
-  useEffect(scrollToBottom, [messages, isLoading, suggestions]);
+  // --- 1. CHAT LOGIC ---
+  const handleSend = async () => {
+    if (!input.trim()) return;
 
-  const openSourcesModal = (sources) => { setCurrentSources(sources); setModalIsOpen(true); };
-
-  const handleSendMessage = async (messageText = userInput) => {
-    if (!messageText.trim() || isLoading) return;
-    const userMessage = { id: Date.now(), text: messageText, sender: 'user', sources: [] };
-    const aiPlaceholder = { id: Date.now() + 1, text: '', sender: 'ai', sources: [] };
-    const historyForAPI = messages.slice(-4).map(msg => ({ sender: msg.sender, text: msg.text }));
-    setMessages(prev => [...prev, userMessage, aiPlaceholder]);
-    setUserInput('');
-    setSuggestions([]);
+    const userMessage = { sender: 'user', text: input };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
     setIsLoading(true);
-try {
-  const response = await fetch('https://documentor-backend-8evm.onrender.com/query', {
-    method: 'POST', 
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, question: messageText, chat_history: historyForAPI }),
-  });
-  
-  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const sourcesHeader = response.headers.get('X-Source-Chunks');
-      const decodedSources = sourcesHeader ? JSON.parse(atob(sourcesHeader)) : [];
+
+    try {
+      // Send to your backend
+      const response = await fetch("https://documentor-backend-8evm.onrender.com/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question: userMessage.text,
+          chat_history: messages // Send previous history for context
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to get answer");
+
+      // Handle Streaming Response (Simplified for now, just text)
+      // Note: If you implemented streaming in backend, you might need a reader here.
+      // For this MVP, let's assume standard text response or handle stream basic way:
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let finalAnswer = '';
+      let botText = "";
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        finalAnswer += chunk;
-        setMessages(prev => prev.map(msg => msg.id === aiPlaceholder.id ? { ...msg, text: finalAnswer, sources: decodedSources } : msg));
+        const chunk = decoder.decode(value);
+        botText += chunk;
+        // Live update the last message
+        setMessages((prev) => {
+           const lastMsg = prev[prev.length - 1];
+           if (lastMsg.sender === 'model') {
+             return [...prev.slice(0, -1), { sender: 'model', text: botText }];
+           } else {
+             return [...prev, { sender: 'model', text: botText }];
+           }
+        });
       }
-      const answerParts = finalAnswer.split('\n');
-      const mainAnswer = answerParts.filter(part => !part.trim().startsWith('SUGGESTION:')).join('\n');
-      const extractedSuggestions = answerParts.filter(part => part.trim().startsWith('SUGGESTION:')).map(s => s.replace('SUGGESTION:', '').trim());
-      setMessages(prev => prev.map(msg => msg.id === aiPlaceholder.id ? { ...msg, text: mainAnswer } : msg));
-      setSuggestions(extractedSuggestions);
+
     } catch (error) {
-      console.error("Request failed:", error);
-      setMessages(prev => prev.map(msg => msg.id === aiPlaceholder.id ? { ...msg, text: 'Sorry, I encountered an error.', isError: true } : msg));
+      console.error("Chat Error:", error);
+      setMessages((prev) => [...prev, { sender: 'model', text: "Error: Could not reach the AI." }]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleExport = async () => {
-    if (messages.length <= 1) {
-      alert("There is not enough conversation to export.");
+  // --- 2. DOWNLOAD SUMMARY LOGIC (Your New Code) ---
+  const handleDownloadSummary = async () => {
+    if (messages.length === 0) {
+      alert("No conversation to summarize yet!");
       return;
     }
-    setIsExporting(true);
+
+    setIsDownloading(true);
+
     try {
-      const historyForExport = messages.map(msg => ({
-        sender: msg.sender, text: msg.text,
-      }));
-      const response = await axios.post(`https://documentor-backend-8evm.onrender.com/export/pdf`, {
-          chat_history: historyForExport
-      }, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
+      const payload = {
+        chat_history: messages.map(msg => ({
+          sender: msg.sender === "user" ? "user" : "model",
+          text: msg.text
+        }))
+      };
+
+      const response = await fetch("https://documentor-backend-8evm.onrender.com/export/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error("Failed to generate PDF");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute('download', 'DocuMentor_Summary.pdf');
+      link.download = `DocuMentor_Summary_${new Date().toISOString().slice(0,10)}.pdf`;
       document.body.appendChild(link);
       link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      link.remove();
+      
+      console.log("PDF Downloaded successfully!");
+
     } catch (error) {
-      console.error("PDF Export failed:", error);
-      alert("Sorry, there was an error creating your PDF report.");
+      console.error("Download Error:", error);
+      alert("Failed to download summary. Please try again.");
     } finally {
-      setIsExporting(false);
+      setIsDownloading(false);
     }
   };
 
-  const handleSuggestionClick = (suggestion) => { handleSendMessage(suggestion); };
-  const handleKeyPress = (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSendMessage(); } };
-
   return (
-    <div className="h-full flex flex-col w-full bg-black">
-      <div className="flex-grow overflow-y-auto p-4">
-        <div className="max-w-4xl mx-auto">
-          {messages.map((msg) => (
-            <div key={msg.id} className="flex items-start gap-4 my-6">
-              {msg.sender === 'ai' 
-                ? <div className="bg-gray-800 p-2 rounded-full"><FaRobot className="text-white text-lg" /></div>
-                : <div className="bg-gradient-to-br from-fuchsia-600 to-indigo-600 p-2 rounded-full"><FaUserCircle className="text-white text-lg" /></div>
-              }
-              <div className="flex-1 pt-1">
-                <div className={`prose prose-invert max-w-none ${msg.sender === 'ai' ? 'bg-gray-900 border border-gray-800 p-4 rounded-lg' : ''} ${msg.isError ? 'text-red-400' : 'text-gray-200'}`}>
-                  <ReactMarkdown components={CodeBlock}>{msg.text}</ReactMarkdown>
-                </div>
-                {msg.sender === 'ai' && msg.sources && msg.sources.length > 0 && !isLoading && (
-                  <button onClick={() => openSourcesModal(msg.sources)} className="mt-3 flex items-center gap-2 text-xs text-gray-500 hover:text-purple-400 transition-colors">
-                    <FaBook />
-                    <span>Show Sources</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          <div ref={chatEndRef} />
-        </div>
-      </div>
+    <div className="flex flex-col h-full bg-gray-900 w-full max-w-4xl mx-auto border-x border-gray-800">
       
-      <div className="w-full border-t border-gray-800 bg-black pt-4 pb-4">
-        {suggestions.length > 0 && (
-          <div className="max-w-4xl mx-auto px-4 mb-3">
-            <h3 className="text-sm text-gray-500 mb-2 flex items-center gap-2"><FaQuestionCircle /> Suggestions:</h3>
-            <div className="flex flex-wrap gap-2">
-              {suggestions.map((s, i) => (
-                <button 
-                  key={i} 
-                  onClick={() => handleSuggestionClick(s)}
-                  className="bg-gray-800 text-left hover:bg-gray-700 text-gray-200 text-sm py-1 px-3 rounded-full transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
+      {/* --- HEADER WITH DOWNLOAD BUTTON --- */}
+      <div className="bg-gray-800 p-4 shadow-md flex justify-between items-center">
+        <div className="text-gray-300 text-sm">Session: <span className="font-mono text-purple-400">{sessionId.slice(0,8)}...</span></div>
+        
+        <button 
+          onClick={handleDownloadSummary}
+          disabled={messages.length === 0 || isDownloading}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all
+            ${messages.length === 0 
+              ? 'bg-gray-700 text-gray-500 cursor-not-allowed' 
+              : 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-900/20'}`}
+        >
+          {isDownloading ? (
+            <span className="animate-pulse">Generating PDF...</span>
+          ) : (
+            <>
+              <FiDownload /> Download Summary
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* --- MESSAGES AREA --- */}
+      <div className="flex-grow overflow-y-auto p-4 space-y-4">
+        {messages.length === 0 && (
+          <div className="text-center text-gray-500 mt-20">
+            <p>Ask a question about your document to get started!</p>
+          </div>
+        )}
+        {messages.map((msg, idx) => (
+          <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[80%] p-3 rounded-2xl ${
+              msg.sender === 'user' 
+                ? 'bg-purple-600 text-white rounded-br-none' 
+                : 'bg-gray-800 text-gray-200 rounded-bl-none border border-gray-700'
+            }`}>
+              {msg.text}
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-800 text-gray-400 p-3 rounded-2xl rounded-bl-none border border-gray-700 text-sm animate-pulse">
+              Thinking...
             </div>
           </div>
         )}
+      </div>
 
-        <div className="max-w-4xl mx-auto flex items-center gap-2 px-4">
+      {/* --- INPUT AREA --- */}
+      <div className="p-4 bg-gray-800 border-t border-gray-700">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Ask something about your doc..."
+            className="flex-grow bg-gray-900 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500 transition-colors"
+          />
           <button 
-            title="Export Conversation to PDF"
-            onClick={handleExport}
-            disabled={isExporting || messages.length <= 1}
-            className="p-3 bg-gray-900 border border-gray-700 hover:border-purple-500 rounded-lg text-gray-300 hover:text-purple-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleSend}
+            disabled={isLoading || !input.trim()}
+            className="bg-purple-600 hover:bg-purple-700 text-white p-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isExporting ? <FiLoader className="animate-spin text-xl" /> : <FiDownload className="text-xl"/>}
+            <FiSend size={20} />
           </button>
-          
-          <div className="relative flex-grow">
-            <TextareaAutosize
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="Ask a question about your document..."
-              className="w-full bg-black border-2 border-gray-700 rounded-lg p-4 pr-14 text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none shadow-lg transition-colors focus:border-purple-500"
-              maxRows={5}
-              disabled={isLoading}
-            />
-            <button
-              onClick={() => handleSendMessage()}
-              disabled={isLoading || !userInput.trim()}
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-gray-500 hover:text-purple-400 disabled:text-gray-700 disabled:cursor-not-allowed transition-colors"
-            >
-              <FaPaperPlane className="text-2xl" />
-            </button>
-          </div>
         </div>
       </div>
-      
-      <Modal
-        isOpen={modalIsOpen}
-        onRequestClose={() => setModalIsOpen(false)}
-        style={{
-          overlay: { backgroundColor: 'rgba(0, 0, 0, 0.85)', zIndex: 50 },
-          content: {
-            top: '50%', left: '50%', right: 'auto', bottom: 'auto',
-            marginRight: '-50%', transform: 'translate(-50%, -50%)',
-            background: '#111827', border: '1px solid #374151',
-            borderRadius: '10px', color: 'white', maxWidth: '90%', width: '800px',
-            padding: '2rem'
-          }
-        }}
-        contentLabel="Source Chunks"
-      >
-        <h2 className="text-2xl font-bold mb-4 bg-gradient-to-r from-fuchsia-500 to-purple-500 bg-clip-text text-transparent">Source Material</h2>
-        <div className="max-h-[60vh] overflow-y-auto pr-4">
-          {currentSources.map((source, index) => (
-            <div key={index} className="bg-gray-900 p-4 mb-3 rounded-lg border border-gray-700">
-              <p className="text-gray-300 whitespace-pre-wrap">{source}</p>
-            </div>
-          ))}
-        </div>
-        <button onClick={() => setModalIsOpen(false)} className="mt-6 w-full font-bold py-2 px-4 rounded-lg text-white bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:from-fuchsia-700 hover:to-indigo-700 transition-all">Close</button>
-      </Modal>
     </div>
   );
-}
+};
 
 export default ChatBox;
