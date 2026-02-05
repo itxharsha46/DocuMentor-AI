@@ -12,7 +12,7 @@ class LLM:
         
         genai.configure(api_key=api_key)
         
-        # FIX: Use a model explicitly found in your logs
+        # FIX: Use the alias that explicitly appeared in your logs
         self.model = genai.GenerativeModel('gemini-flash-latest')
 
     async def generate_answer_stream(self, question, context_chunks, chat_history):
